@@ -39,6 +39,10 @@ export interface Obstacle extends Circle {
   // gives obstacles independent paths instead of straight vertical lines, so
   // dodging one doesn't just mean "pick a lane and hold it."
   driftVx?: number;
+  // Which sprite (from main.ts's SPRITE_NAMES, a CC0 Kenney enemy pack)
+  // renders on top of the hue-coloured disc, fixed at spawn --- purely
+  // cosmetic, isFatalCollision never reads it.
+  sprite?: string;
 }
 
 export function circlesOverlap(a: Circle, b: Circle): boolean {

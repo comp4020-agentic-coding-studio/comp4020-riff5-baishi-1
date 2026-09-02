@@ -42,6 +42,41 @@ const FIRST_SPAWN_DELAY_MS = 1200;
 const DIGIT_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"];
 const MAX_DT = 0.05; // clamp so a backgrounded tab can't leap the sim forward
 
+// A random creature from Kenney's CC0 "Platformer Extra Animations &
+// Enemies" pack rides each obstacle, purely cosmetic --- the hue-coloured
+// disc underneath is still what isFatalCollision and the player actually
+// care about, this just gives the falling threats some personality instead
+// of being plain circles. Preloaded once as plain Image objects (no
+// spritesheet slicing needed, the pack ships these as standalone PNGs);
+// drawImage no-ops gracefully on a frame where one hasn't finished loading
+// yet, so no readiness gate is needed before the game loop starts.
+const SPRITE_NAMES = [
+  "bat",
+  "bee",
+  "spider",
+  "ghost",
+  "ladybug",
+  "fly",
+  "frog",
+  "mouse",
+  "slime",
+  "slime-blue",
+  "slime-green",
+  "fish-pink",
+  "fish-green",
+  "worm",
+  "piranha",
+  "snake-slime",
+  "spinner",
+  "barnacle",
+];
+const SPRITE_IMAGES: Record<string, HTMLImageElement> = {};
+for (const name of SPRITE_NAMES) {
+  const img = new Image();
+  img.src = `./sprites/${name}.png`;
+  SPRITE_IMAGES[name] = img;
+}
+
 const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 // Synthesised, not sampled: three short tones cover swap/match/game-over
@@ -375,6 +410,7 @@ function spawnObstacle() {
     shiftTimerMs: shifting ? SHIFT_INTERVAL_MS : undefined,
     speedMult: 1 - speedSpread / 2 + Math.random() * speedSpread,
     driftVx: (Math.random() - 0.5) * 2 * driftSpread,
+    sprite: SPRITE_NAMES[Math.floor(Math.random() * SPRITE_NAMES.length)],
   });
 }
 
@@ -744,6 +780,19 @@ function draw() {
     ctx.fillStyle = HUE_COLOR[obstacle.hue];
     ctx.arc(obstacle.x, obstacle.y, obstacle.radius, 0, Math.PI * 2);
     ctx.fill();
+    ctx.shadowBlur = 0;
+    // The sprite sits inside the hue disc rather than covering it --- the
+    // coloured ring stays visible around the edge, so the disc's colour
+    // (the thing that actually decides safe/fatal) is never hidden behind
+    // whichever creature happened to spawn on it.
+    const sprite = obstacle.sprite ? SPRITE_IMAGES[obstacle.sprite] : undefined;
+    if (sprite && sprite.complete && sprite.naturalWidth > 0) {
+      const maxDim = obstacle.radius * 1.5;
+      const scale = maxDim / Math.max(sprite.naturalWidth, sprite.naturalHeight);
+      const w = sprite.naturalWidth * scale;
+      const h = sprite.naturalHeight * scale;
+      ctx.drawImage(sprite, obstacle.x - w / 2, obstacle.y - h / 2, w, h);
+    }
     if (obstacle.shifting) {
       // A fast dashed white ring flags "this one's a gamble" independent of
       // whatever colour it's currently showing --- the colour itself will
