@@ -5,6 +5,7 @@ import {
   cycleHue,
   fallSpeed,
   isFatalCollision,
+  moveSpeed,
   spawnIntervalMs,
   type Hue,
   type Obstacle,
@@ -27,7 +28,6 @@ const HUE_COLOR: Record<Hue, string> = {
   d: "#cc79a7",
 };
 const FIRST_SPAWN_DELAY_MS = 1200;
-const MOVE_SPEED = 340; // px/s, keyboard movement
 const MAX_DT = 0.05; // clamp so a backgrounded tab can't leap the sim forward
 
 const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -93,6 +93,7 @@ let height = 0;
 let player: Player;
 let swapButton: { x: number; y: number; radius: number };
 let muteButton: { x: number; y: number; radius: number };
+let neutralButton: { x: number; y: number; radius: number };
 let obstacles: Obstacle[] = [];
 let state: "playing" | "gameover" = "playing";
 let elapsedSeconds = 0;
@@ -131,10 +132,37 @@ let shakeTime = 0;
 // aliases) since a dash reads as a deliberate double-press, and doubling on
 // a/d would fire constantly for anyone who taps rather than holds.
 const DASH_MULTIPLIER = 2.4;
-const DASH_DURATION_S = 0.16;
+const DASH_DURATION_S = 0.4;
 const DOUBLE_TAP_WINDOW_MS = 300;
 let dashTime = 0;
 let lastArrowPress: { key: "left" | "right" | null; at: number } = { key: null, at: 0 };
+
+// Shifting obstacles cycle hue as they fall, so touching one is a gamble on
+// whatever colour it happens to hold at contact --- higher risk than a
+// stable obstacle, so a successful match pays out more.
+const SHIFT_CHANCE = 0.16;
+const SHIFT_INTERVAL_MS = 220;
+const SHIFT_MIN_ELAPSED_S = 12; // give the base game a clean stretch first
+
+// Neutral: once score crosses a threshold, one activation is banked that
+// makes every colour safe for a few seconds --- an escape valve for the
+// widening palette, spendable on your own timing rather than automatic.
+const NEUTRAL_SCORE_STEP = 250;
+const NEUTRAL_DURATION_S = 4;
+let neutralAvailable = false;
+let neutralActive = false;
+let neutralTimeLeft = 0;
+let neutralNextThreshold = NEUTRAL_SCORE_STEP;
+
+function playRiskyMatchSound() {
+  beep(1100, 90, "sine", 0.07);
+  setTimeout(() => beep(1400, 90, "sine", 0.06), 60);
+}
+function playNeutralSound() {
+  beep(500, 100, "triangle", 0.08);
+  setTimeout(() => beep(750, 100, "triangle", 0.08), 80);
+  setTimeout(() => beep(1000, 140, "triangle", 0.08), 160);
+}
 
 interface Star {
   x: number;
@@ -184,6 +212,9 @@ function resize() {
   // which circle was "you" — found by playing at the mobile viewport.
   swapButton = { x: width - 34, y: 34, radius: 20 };
   muteButton = { x: 34, y: 34, radius: 16 };
+  // Below the swap button, clear of the player row like the swap button
+  // itself --- only interactive (and only drawn) once neutral is available.
+  neutralButton = { x: width - 34, y: 130, radius: 16 };
 
   // A cheap parallax backdrop: regenerated on resize (not per-frame), so it
   // costs nothing during play beyond drawing dots already sized for the
@@ -218,6 +249,10 @@ function resetGame() {
   shakeTime = 0;
   dashTime = 0;
   lastArrowPress = { key: null, at: 0 };
+  neutralAvailable = false;
+  neutralActive = false;
+  neutralTimeLeft = 0;
+  neutralNextThreshold = NEUTRAL_SCORE_STEP;
   announcer.textContent = "";
 }
 
@@ -225,12 +260,25 @@ function spawnObstacle() {
   const radius = clamp(width * 0.045, 14, 24);
   const active = activeHueCount(elapsedSeconds);
   const hue: Hue = ALL_HUES[Math.floor(Math.random() * active)];
+  const shifting = elapsedSeconds >= SHIFT_MIN_ELAPSED_S && Math.random() < SHIFT_CHANCE;
   obstacles.push({
     x: clamp(Math.random() * width, radius, width - radius),
     y: -radius,
     radius,
     hue,
+    shifting,
+    shiftTimerMs: shifting ? SHIFT_INTERVAL_MS : undefined,
   });
+}
+
+function activateNeutral() {
+  if (state !== "playing" || !neutralAvailable) return;
+  neutralAvailable = false;
+  neutralActive = true;
+  neutralTimeLeft = NEUTRAL_DURATION_S;
+  neutralNextThreshold = score + NEUTRAL_SCORE_STEP;
+  playNeutralSound();
+  spawnBurst(player.x, player.y, "#ffffff", 24);
 }
 
 function checkDashTrigger(key: "left" | "right") {
@@ -263,6 +311,12 @@ function withinMuteButton(x: number, y: number): boolean {
   return dx * dx + dy * dy < (muteButton.radius + 12) ** 2;
 }
 
+function withinNeutralButton(x: number, y: number): boolean {
+  const dx = x - neutralButton.x;
+  const dy = y - neutralButton.y;
+  return dx * dx + dy * dy < (neutralButton.radius + 12) ** 2;
+}
+
 canvas.addEventListener("pointerdown", (event) => {
   canvas.focus();
   const { x, y } = pointFromEvent(event);
@@ -272,6 +326,10 @@ canvas.addEventListener("pointerdown", (event) => {
   }
   if (state === "gameover") {
     resetGame();
+    return;
+  }
+  if (neutralAvailable && withinNeutralButton(x, y)) {
+    activateNeutral();
     return;
   }
   if (withinSwapButton(x, y)) {
@@ -328,6 +386,24 @@ window.addEventListener("keydown", (event) => {
   }
   if (event.key === "m" || event.key === "M") {
     toggleSound();
+    return;
+  }
+  if (event.key === "n" || event.key === "N") {
+    activateNeutral();
+    return;
+  }
+  if (state === "playing" && ["1", "2", "3", "4"].includes(event.key)) {
+    // Direct selection, not just cycling: picks the Nth active hue outright,
+    // a faster route to a specific colour once there are more than two to
+    // cycle through. A digit beyond the currently active count is a no-op
+    // rather than an error, since which digits do anything changes as
+    // activeHueCount ramps up mid-round.
+    const index = Number(event.key) - 1;
+    const active = activeHueCount(elapsedSeconds);
+    if (index < active) {
+      player.hue = ALL_HUES[index];
+      playSwapSound();
+    }
     return;
   }
   if (state === "gameover") {
@@ -401,9 +477,18 @@ function update(dt: number) {
 
   if (dashTime > 0) dashTime = Math.max(0, dashTime - dt);
 
+  if (!neutralActive && !neutralAvailable && score >= neutralNextThreshold) {
+    neutralAvailable = true;
+  }
+  if (neutralActive) {
+    neutralTimeLeft = Math.max(0, neutralTimeLeft - dt);
+    if (neutralTimeLeft === 0) neutralActive = false;
+  }
+
   if (draggingPointerId === null) {
     const dir = (pressed.has("right") ? 1 : 0) - (pressed.has("left") ? 1 : 0);
-    const speed = dashTime > 0 ? MOVE_SPEED * DASH_MULTIPLIER : MOVE_SPEED;
+    const baseSpeed = moveSpeed(elapsedSeconds);
+    const speed = dashTime > 0 ? baseSpeed * DASH_MULTIPLIER : baseSpeed;
     player.x = clamp(player.x + dir * speed * dt, player.radius, width - player.radius);
   }
 
@@ -418,30 +503,46 @@ function update(dt: number) {
   for (const obstacle of obstacles) {
     obstacle.y += speed * dt;
 
-    if (isFatalCollision(player, obstacle)) {
-      if (shields > 0) {
-        shields -= 1;
-        playShieldBreakSound();
-        spawnBurst(player.x, player.y, "#f5f5f7", 16);
-        shakeTime = Math.max(shakeTime, 0.18);
-        continue; // banked shield absorbs the hit; no score, round continues
+    if (obstacle.shifting && obstacle.shiftTimerMs !== undefined) {
+      obstacle.shiftTimerMs -= dt * 1000;
+      if (obstacle.shiftTimerMs <= 0) {
+        const active = activeHueCount(elapsedSeconds);
+        obstacle.hue = ALL_HUES[Math.floor(Math.random() * active)];
+        obstacle.shiftTimerMs = SHIFT_INTERVAL_MS;
       }
-      gameOver();
-      survivors.push(obstacle);
-      continue;
     }
-    if (circlesOverlap(player, obstacle)) {
+
+    const overlapping = circlesOverlap(player, obstacle);
+    if (overlapping) {
+      const fatal = !neutralActive && isFatalCollision(player, obstacle);
+      if (fatal) {
+        if (shields > 0) {
+          shields -= 1;
+          playShieldBreakSound();
+          spawnBurst(player.x, player.y, "#f5f5f7", 16);
+          shakeTime = Math.max(shakeTime, 0.18);
+          continue; // banked shield absorbs the hit; no score, round continues
+        }
+        gameOver();
+        survivors.push(obstacle);
+        continue;
+      }
       matchedCount += 1;
-      score += 15;
-      playMatchSound();
-      spawnBurst(obstacle.x, obstacle.y, HUE_COLOR[obstacle.hue], 10);
+      score += obstacle.shifting ? 25 : 15;
+      if (obstacle.shifting) {
+        playRiskyMatchSound();
+        spawnBurst(obstacle.x, obstacle.y, "#ffffff", 16);
+      } else {
+        playMatchSound();
+        spawnBurst(obstacle.x, obstacle.y, HUE_COLOR[obstacle.hue], 10);
+      }
       shieldProgress += 1;
       if (shieldProgress >= SHIELD_MATCHES_REQUIRED && shields < MAX_SHIELDS) {
         shieldProgress = 0;
         shields += 1;
         playShieldUpSound();
       }
-      continue; // same-hue match: absorbed, removed from play
+      continue; // safe overlap (same hue, or neutral): absorbed, removed from play
     }
     if (obstacle.y - obstacle.radius <= height) {
       survivors.push(obstacle);
@@ -487,6 +588,20 @@ function draw() {
     ctx.fillStyle = HUE_COLOR[obstacle.hue];
     ctx.arc(obstacle.x, obstacle.y, obstacle.radius, 0, Math.PI * 2);
     ctx.fill();
+    if (obstacle.shifting) {
+      // A fast dashed white ring flags "this one's a gamble" independent of
+      // whatever colour it's currently showing --- the colour itself will
+      // have changed again by the time a player reacts to it.
+      ctx.shadowBlur = 0;
+      ctx.beginPath();
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([3, 3]);
+      ctx.lineDashOffset = prefersReducedMotion ? 0 : elapsedSeconds * -120;
+      ctx.arc(obstacle.x, obstacle.y, obstacle.radius + 4, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
   }
   ctx.shadowBlur = 0;
 
@@ -512,14 +627,24 @@ function draw() {
   }
   ctx.setLineDash([]);
 
+  if (neutralActive) {
+    // A wide white halo, brightest right after activation and fading with
+    // the timer, so "any colour is safe right now" is visible at a glance
+    // without reading the countdown text.
+    ctx.beginPath();
+    ctx.fillStyle = `rgba(255, 255, 255, ${0.15 + 0.15 * (neutralTimeLeft / NEUTRAL_DURATION_S)})`;
+    ctx.arc(player.x, player.y, player.radius + 14, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
   ctx.beginPath();
-  ctx.shadowColor = HUE_COLOR[player.hue];
-  ctx.shadowBlur = 18;
+  ctx.shadowColor = neutralActive ? "#ffffff" : HUE_COLOR[player.hue];
+  ctx.shadowBlur = neutralActive ? 26 : 18;
   ctx.fillStyle = HUE_COLOR[player.hue];
   ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
   ctx.fill();
   ctx.shadowBlur = 0;
-  ctx.lineWidth = 2;
+  ctx.lineWidth = neutralActive ? 3 : 2;
   ctx.strokeStyle = "#f5f5f7";
   ctx.stroke();
 
@@ -549,6 +674,42 @@ function draw() {
     ctx.stroke();
   }
 
+  // Neutral ability icon: only drawn once it's banked, so it doesn't clutter
+  // the HUD before there's anything to press. A star reads as "bonus" at a
+  // glance; pulses gently while armed so it isn't missed against the busier
+  // background this riff added.
+  if (neutralAvailable || neutralActive) {
+    const starPulse = neutralActive || prefersReducedMotion ? 0 : Math.sin(elapsedSeconds * 5) * 2;
+    ctx.beginPath();
+    ctx.fillStyle = neutralActive ? "#ffffff" : "#f5f5f7";
+    const spikes = 5;
+    const outerR = neutralButton.radius - 2 + starPulse;
+    const innerR = outerR * 0.45;
+    for (let i = 0; i < spikes * 2; i++) {
+      const r = i % 2 === 0 ? outerR : innerR;
+      const angle = (Math.PI / spikes) * i - Math.PI / 2;
+      const px = neutralButton.x + Math.cos(angle) * r;
+      const py = neutralButton.y + Math.sin(angle) * r;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.fill();
+    if (neutralActive) {
+      ctx.beginPath();
+      ctx.strokeStyle = "#f5f5f7";
+      ctx.lineWidth = 2;
+      ctx.arc(
+        neutralButton.x,
+        neutralButton.y,
+        neutralButton.radius + 6,
+        -Math.PI / 2,
+        -Math.PI / 2 + (neutralTimeLeft / NEUTRAL_DURATION_S) * Math.PI * 2,
+      );
+      ctx.stroke();
+    }
+  }
+
   // Mute toggle, drawn as a filled/crossed speaker so its state reads at a
   // glance without a text label competing with the score line beside it.
   ctx.beginPath();
@@ -574,11 +735,13 @@ function draw() {
   ctx.font = "16px system-ui, sans-serif";
   ctx.fillText(`Score: ${score}`, muteButton.x + muteButton.radius + 12, 24);
 
+  // Level is just activeHueCount reframed as a counter that only goes up ---
+  // the same escalation, in a shape a player reads as progress rather than a
+  // fact about the palette.
   const active = activeHueCount(elapsedSeconds);
-  if (active > 2) {
-    ctx.font = "12px system-ui, sans-serif";
-    ctx.fillText(`${active} colours in play`, muteButton.x + muteButton.radius + 12, 44);
-  }
+  const level = active - 1;
+  ctx.font = "12px system-ui, sans-serif";
+  ctx.fillText(`Level ${level} · ${active} colours`, muteButton.x + muteButton.radius + 12, 44);
 
   if (state === "gameover") {
     ctx.fillStyle = "rgba(15, 18, 32, 0.75)";

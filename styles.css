@@ -12,7 +12,7 @@ header nav a {
 }
 
 main {
-  max-width: 40rem;
+  max-width: 56rem;
   margin: 0 auto;
 }
 
@@ -20,18 +20,70 @@ h1 {
   color: #f5f5f7;
 }
 
+.version {
+  font-size: 0.9rem;
+  font-weight: 400;
+  color: #8890a8;
+  vertical-align: middle;
+}
+
 a {
   color: #0b5fff;
 }
 
+.game-layout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 1.5rem;
+}
+
 .game-wrap {
   position: relative;
+  flex: 1 1 24rem;
+  min-width: 0;
+}
+
+.controls {
+  flex: 1 1 14rem;
+  font-size: 0.85rem;
+  color: #c3c8dc;
+}
+
+.controls h2 {
+  font-size: 0.9rem;
+  color: #f5f5f7;
+  margin: 0 0 0.4rem;
+}
+
+.controls h2 + ul {
+  margin-top: 0;
+}
+
+.controls ul {
+  margin: 0 0 1.25rem;
+  padding-left: 1.1rem;
+}
+
+.controls li {
+  margin-bottom: 0.35rem;
+}
+
+.controls kbd {
+  display: inline-block;
+  padding: 0.05rem 0.35rem;
+  border-radius: 0.25rem;
+  background: #262c4a;
+  border: 1px solid #3a4066;
+  font-family: inherit;
+  font-size: 0.8em;
+  color: #f5f5f7;
 }
 
 #game {
   display: block;
   width: 100%;
-  height: min(70vh, 32rem);
+  height: min(85vh, 44rem);
   touch-action: none;
   -webkit-tap-highlight-color: transparent;
   /* touch-action only governs pan/zoom gestures, not iOS's own long-press

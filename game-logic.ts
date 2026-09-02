@@ -19,6 +19,12 @@ export interface Player extends Circle {
 
 export interface Obstacle extends Circle {
   hue: Hue;
+  // A shifting obstacle cycles its own hue while it falls (main.ts drives the
+  // timer); isFatalCollision only ever reads whatever hue it holds at the
+  // moment of overlap, so the risk is entirely in the timing, not in any
+  // extra rule here.
+  shifting?: boolean;
+  shiftTimerMs?: number;
 }
 
 export function circlesOverlap(a: Circle, b: Circle): boolean {
@@ -67,4 +73,13 @@ export function fallSpeed(elapsedSeconds: number): number {
 
 export function spawnIntervalMs(elapsedSeconds: number): number {
   return Math.max(1100 - elapsedSeconds * 22, 380);
+}
+
+// The player's own sideways speed ramps too, on the same curve shape as
+// fallSpeed --- without this, a later round's faster, wider-palette
+// obstacles would out-pace a dodge speed that never changed, and the game
+// would get harder by taking control away rather than by demanding more
+// skill.
+export function moveSpeed(elapsedSeconds: number): number {
+  return 340 + Math.min(elapsedSeconds * 6, 200);
 }
