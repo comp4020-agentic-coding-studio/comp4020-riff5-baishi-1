@@ -1,7 +1,11 @@
 // Pure game rules, kept free of the DOM/canvas so they're testable in
 // isolation (spec/crit-5.test.ts) and reusable from main.ts's render loop.
 
-export type Hue = "a" | "b";
+export type Hue = "a" | "b" | "c" | "d";
+
+// The full palette, in ramp-in order. Only the first `activeHueCount(t)`
+// of these are in play at any moment --- see below.
+export const ALL_HUES: readonly Hue[] = ["a", "b", "c", "d"];
 
 export interface Circle {
   x: number;
@@ -33,6 +37,25 @@ export function isFatalCollision(player: Player, obstacle: Obstacle): boolean {
 
 export function otherHue(hue: Hue): Hue {
   return hue === "a" ? "b" : "a";
+}
+
+// How many hues are live right now. Starts at the original two and adds one
+// more every 25s, capped at the full palette --- the harder version of the
+// same escalation fallSpeed/spawnIntervalMs already do: early seconds stay
+// forgiving, but by the time a round has run a while, tracking your own
+// colour against a widening set is the actual challenge, not just speed.
+export function activeHueCount(elapsedSeconds: number): number {
+  return Math.min(2 + Math.floor(elapsedSeconds / 25), ALL_HUES.length);
+}
+
+// Advance to the next hue among the ones currently in play, wrapping --- the
+// N-colour replacement for otherHue's binary flip. If the player's current
+// hue has fallen outside the active set (can't happen in practice since the
+// set only grows) this still returns a valid active hue rather than throwing.
+export function cycleHue(hue: Hue, activeCount: number): Hue {
+  const active = ALL_HUES.slice(0, activeCount);
+  const index = active.indexOf(hue);
+  return active[(index + 1) % active.length] ?? active[0];
 }
 
 // Obstacles fall faster and spawn more often the longer a round runs, so the
