@@ -62,29 +62,34 @@ function ensureAudio(): AudioContext | null {
   return audioCtx;
 }
 
-// Ambient drone: three detuned low sine tones, each slowly breathing in
-// volume via its own LFO, synthesised rather than sampled like the beep
-// effects above --- a "floating in space" backdrop with no audio asset to
-// ship. Independent of the beep sounds so it survives mute-then-unmute as
-// its own start/stop pair rather than riding on whatever triggered a beep.
+// Ambient drone: four detuned tones, each slowly breathing in volume via its
+// own LFO, synthesised rather than sampled like the beep effects above --- a
+// "floating in space" backdrop with no audio asset to ship. Independent of
+// the beep sounds so it survives mute-then-unmute as its own start/stop pair
+// rather than riding on whatever triggered a beep. The original 55-110Hz
+// voices were technically playing but effectively silent on laptop/phone
+// speakers with no sub-bass response --- shifted up an octave-plus and given
+// a quiet high shimmer voice so it's actually audible, not just present in
+// the audio graph.
 let ambient: { masterGain: GainNode; nodes: OscillatorNode[] } | null = null;
 
 function startAmbient() {
   const ctx = ensureAudio();
   if (!ctx || ambient) return;
   const masterGain = ctx.createGain();
-  masterGain.gain.value = 0.05;
+  masterGain.gain.value = 0.09;
   masterGain.connect(ctx.destination);
 
   const nodes: OscillatorNode[] = [];
-  const voices = [
-    { freq: 55, gain: 0.9, lfoRate: 0.035, lfoDepth: 0.3 },
-    { freq: 82.5, gain: 0.45, lfoRate: 0.05, lfoDepth: 0.18 },
-    { freq: 110, gain: 0.3, lfoRate: 0.07, lfoDepth: 0.12 },
+  const voices: { freq: number; gain: number; type: OscillatorType; lfoRate: number; lfoDepth: number }[] = [
+    { freq: 110, gain: 0.7, type: "sine", lfoRate: 0.035, lfoDepth: 0.3 },
+    { freq: 164.81, gain: 0.45, type: "triangle", lfoRate: 0.05, lfoDepth: 0.2 },
+    { freq: 220, gain: 0.3, type: "sine", lfoRate: 0.07, lfoDepth: 0.15 },
+    { freq: 440, gain: 0.14, type: "triangle", lfoRate: 0.09, lfoDepth: 0.4 },
   ];
   for (const voice of voices) {
     const osc = ctx.createOscillator();
-    osc.type = "sine";
+    osc.type = voice.type;
     osc.frequency.value = voice.freq;
     const voiceGain = ctx.createGain();
     voiceGain.gain.value = voice.gain;
@@ -626,19 +631,28 @@ function update(dt: number) {
     player.x = clamp(player.x + dir * speed * dt, player.radius, width - player.radius);
   }
 
-  spawnTimer -= dt * 1000;
+  // Slow-mo scales the obstacle field's own clock, not the player's --- the
+  // player keeps moving at full speed against a world that's ticking slower,
+  // which is the whole point. Everything obstacle-side (fall, drift, colour
+  // shifting, even how often new ones spawn) shares this one scaled tick, or
+  // a shifting circle would keep changing colour at full speed while merely
+  // falling in slow motion, which read as broken rather than slowed.
+  const timeScale = slowmoActive ? SLOWMO_FACTOR : 1;
+  const worldDt = dt * timeScale;
+
+  spawnTimer -= worldDt * 1000;
   if (spawnTimer <= 0) {
     spawnObstacle();
     spawnTimer = spawnIntervalMs(elapsedSeconds);
   }
 
-  const speed = fallSpeed(elapsedSeconds) * (slowmoActive ? SLOWMO_FACTOR : 1);
+  const speed = fallSpeed(elapsedSeconds);
   const survivors: Obstacle[] = [];
   for (const obstacle of obstacles) {
-    obstacle.y += speed * (obstacle.speedMult ?? 1) * dt;
+    obstacle.y += speed * (obstacle.speedMult ?? 1) * worldDt;
 
     if (obstacle.driftVx) {
-      obstacle.x += obstacle.driftVx * dt;
+      obstacle.x += obstacle.driftVx * worldDt;
       if (obstacle.x - obstacle.radius <= 0 || obstacle.x + obstacle.radius >= width) {
         obstacle.driftVx = -obstacle.driftVx;
         obstacle.x = clamp(obstacle.x, obstacle.radius, width - obstacle.radius);
@@ -646,7 +660,7 @@ function update(dt: number) {
     }
 
     if (obstacle.shifting && obstacle.shiftTimerMs !== undefined) {
-      obstacle.shiftTimerMs -= dt * 1000;
+      obstacle.shiftTimerMs -= worldDt * 1000;
       if (obstacle.shiftTimerMs <= 0) {
         const active = activeHueCount(elapsedSeconds);
         obstacle.hue = ALL_HUES[Math.floor(Math.random() * active)];
