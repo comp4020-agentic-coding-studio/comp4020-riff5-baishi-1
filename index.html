@@ -29,31 +29,21 @@
     </header>
     <main>
       <h1>Two-Tone <span class="version">v1.1</span></h1>
+      <ul class="controls-bar" aria-label="Controls">
+        <li class="control-chip chip-1"><kbd>&larr;</kbd> <kbd>&rarr;</kbd>/<kbd>A</kbd><kbd>D</kbd> move</li>
+        <li class="control-chip chip-2">Double-tap &larr;/&rarr; dash</li>
+        <li class="control-chip chip-3"><kbd>Space</kbd> cycle colour</li>
+        <li class="control-chip chip-4"><kbd>1</kbd>&ndash;<kbd>9</kbd>,<kbd>0</kbd> pick colour</li>
+        <li class="control-chip chip-5">Hold <kbd>&darr;</kbd> slow-mo</li>
+        <li class="control-chip chip-6"><kbd>N</kbd> neutral</li>
+        <li class="control-chip chip-7"><kbd>M</kbd> mute</li>
+        <li class="control-chip chip-8">Drag / tap dot to move</li>
+      </ul>
       <div class="game-layout">
         <div class="game-wrap">
           <canvas id="game" tabindex="0" aria-label="Game area"></canvas>
           <p id="announcer" class="sr-only" role="status" aria-live="polite"></p>
         </div>
-        <aside class="controls" aria-label="Controls and features">
-          <h2>Controls</h2>
-          <ul>
-            <li><kbd>&larr;</kbd> <kbd>&rarr;</kbd> or <kbd>A</kbd> <kbd>D</kbd> &mdash; move</li>
-            <li>Double-tap <kbd>&larr;</kbd> or <kbd>&rarr;</kbd> &mdash; dash</li>
-            <li><kbd>Space</kbd> &mdash; cycle colour</li>
-            <li><kbd>1</kbd>&ndash;<kbd>4</kbd> &mdash; pick a colour directly</li>
-            <li><kbd>N</kbd> &mdash; use neutral (once banked)</li>
-            <li><kbd>M</kbd> &mdash; mute/unmute</li>
-            <li>Drag, or tap the top-right dot &mdash; move / swap colour</li>
-          </ul>
-          <h2>Features</h2>
-          <ul>
-            <li>Match your colour to survive; a mismatch ends the round</li>
-            <li>More colours join the fall the longer you last</li>
-            <li>A white-ringed circle keeps shifting colour &mdash; risky, but worth more</li>
-            <li>Matches charge a shield that blocks one bad hit</li>
-            <li>Score enough to bank Neutral: a few seconds where every colour is safe</li>
-          </ul>
-        </aside>
       </div>
     </main>
     <script type="module" src="./main.ts"></script>

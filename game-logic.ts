@@ -1,11 +1,16 @@
 // Pure game rules, kept free of the DOM/canvas so they're testable in
 // isolation (spec/crit-5.test.ts) and reusable from main.ts's render loop.
 
-export type Hue = "a" | "b" | "c" | "d";
+export type Hue = "a" | "b" | "c" | "d" | "e" | "f" | "g" | "h" | "i" | "j";
 
 // The full palette, in ramp-in order. Only the first `activeHueCount(t)`
-// of these are in play at any moment --- see below.
-export const ALL_HUES: readonly Hue[] = ["a", "b", "c", "d"];
+// of these are in play at any moment --- see below. The first four (a-d) are
+// a CVD-simulation-checked set; e-j widen the game to 10 colours for a real
+// late-round memory/attention test, at the cost of that same guarantee ---
+// ten mutually distinguishable hues under every form of colour blindness
+// isn't achievable by hue alone, so main.ts's digit-key selection (1-9, 0)
+// is the accessible fallback once the palette gets that wide.
+export const ALL_HUES: readonly Hue[] = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"];
 
 export interface Circle {
   x: number;
@@ -25,6 +30,15 @@ export interface Obstacle extends Circle {
   // extra rule here.
   shifting?: boolean;
   shiftTimerMs?: number;
+  // Per-obstacle multiplier on fallSpeed(t), fixed at spawn --- without it
+  // every obstacle on screen moves in lockstep, which reads as one wave
+  // rather than a field of independent threats. isFatalCollision doesn't
+  // care how a circle got to where it is, only whether it's there.
+  speedMult?: number;
+  // Sideways drift in px/s, bounced off the play-area edges by main.ts ---
+  // gives obstacles independent paths instead of straight vertical lines, so
+  // dodging one doesn't just mean "pick a lane and hold it."
+  driftVx?: number;
 }
 
 export function circlesOverlap(a: Circle, b: Circle): boolean {

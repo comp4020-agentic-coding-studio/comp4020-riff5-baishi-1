@@ -60,54 +60,77 @@ a {
 .game-layout {
   display: flex;
   align-items: stretch;
-  gap: 1.5rem;
   flex: 1 1 auto;
   min-height: 0;
 }
 
 .game-wrap {
   position: relative;
-  flex: 1 1 24rem;
+  flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
 }
 
-.controls {
-  flex: 0 1 14rem;
-  min-height: 0;
-  overflow-y: auto;
-  font-size: 0.8rem;
-  color: #c3c8dc;
+/* A row of colour-coded chips instead of a side list --- each control gets
+   its own tinted box so the row reads at a glance instead of as a wall of
+   text, and it collapses to wrapped rows on narrow screens for free since
+   it's just a flex-wrap list. */
+.controls-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  list-style: none;
+  margin: 0 0 0.75rem;
+  padding: 0;
+  flex: 0 0 auto;
 }
 
-.controls h2 {
-  font-size: 0.9rem;
-  color: #f5f5f7;
-  margin: 0 0 0.4rem;
+.control-chip {
+  padding: 0.3rem 0.6rem;
+  border-radius: 0.6rem;
+  font-size: 0.75rem;
+  color: #0f1220;
+  white-space: nowrap;
 }
 
-.controls h2 + ul {
-  margin-top: 0;
-}
-
-.controls ul {
-  margin: 0 0 1.25rem;
-  padding-left: 1.1rem;
-}
-
-.controls li {
-  margin-bottom: 0.25rem;
-}
-
-.controls kbd {
+.control-chip kbd {
   display: inline-block;
-  padding: 0.05rem 0.35rem;
+  padding: 0 0.3rem;
   border-radius: 0.25rem;
-  background: #262c4a;
-  border: 1px solid #3a4066;
+  background: rgba(15, 18, 32, 0.25);
   font-family: inherit;
-  font-size: 0.8em;
+  font-size: 0.85em;
+  color: #0f1220;
+}
+
+.chip-1 {
+  background: #38bdf8;
+}
+.chip-2 {
+  background: #f59e0b;
+}
+.chip-3 {
+  background: #009e73;
+}
+.chip-4 {
+  background: #cc79a7;
+}
+.chip-5 {
+  background: #7dd3fc;
+}
+.chip-6 {
+  background: #f0e442;
+}
+.chip-7 {
+  background: #d55e00;
   color: #f5f5f7;
+}
+.chip-7 kbd {
+  color: #f5f5f7;
+  background: rgba(245, 245, 247, 0.25);
+}
+.chip-8 {
+  background: #e5e5e5;
 }
 
 #game {
@@ -124,20 +147,6 @@ a {
   user-select: none;
   background: #171b2e;
   border-radius: 0.75rem;
-}
-
-@media (max-width: 700px) {
-  .game-layout {
-    flex-direction: column;
-  }
-
-  .game-wrap {
-    flex: 3 1 0;
-  }
-
-  .controls {
-    flex: 1 1 0;
-  }
 }
 
 .sr-only {

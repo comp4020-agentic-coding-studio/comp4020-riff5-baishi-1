@@ -21,13 +21,25 @@ const ctx = canvas.getContext("2d")!;
 // palette, chosen for the same reason --- bluish green and reddish purple
 // both stay distinguishable from the first pair and from each other under
 // protanopia, deuteranopia and tritanopia, unlike an arbitrary rainbow ramp.
+// e-h round out the rest of Okabe-Ito (yellow, blue, vermillion); i/j go
+// beyond it purely for a 10th and 9th hue since Okabe-Ito tops out at eight
+// --- past d, the digit-key direct-select (1-9, 0) is the real accessible
+// path, not colour discrimination alone.
 const HUE_COLOR: Record<Hue, string> = {
   a: "#38bdf8",
   b: "#f59e0b",
   c: "#009e73",
   d: "#cc79a7",
+  e: "#f0e442",
+  f: "#0072b2",
+  g: "#d55e00",
+  h: "#e5e5e5",
+  i: "#7cfc00",
+  j: "#a0522d",
 };
 const FIRST_SPAWN_DELAY_MS = 1200;
+// "0" stands in for the 10th hue, since there's no bare digit for it.
+const DIGIT_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"];
 const MAX_DT = 0.05; // clamp so a backgrounded tab can't leap the sim forward
 
 const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -42,9 +54,67 @@ let soundOn = localStorage.getItem("two-tone-sound") !== "off";
 
 function ensureAudio(): AudioContext | null {
   if (!soundOn) return null;
-  if (!audioCtx) audioCtx = new AudioContext();
+  if (!audioCtx) {
+    audioCtx = new AudioContext();
+    startAmbient();
+  }
   if (audioCtx.state === "suspended") audioCtx.resume();
   return audioCtx;
+}
+
+// Ambient drone: three detuned low sine tones, each slowly breathing in
+// volume via its own LFO, synthesised rather than sampled like the beep
+// effects above --- a "floating in space" backdrop with no audio asset to
+// ship. Independent of the beep sounds so it survives mute-then-unmute as
+// its own start/stop pair rather than riding on whatever triggered a beep.
+let ambient: { masterGain: GainNode; nodes: OscillatorNode[] } | null = null;
+
+function startAmbient() {
+  const ctx = ensureAudio();
+  if (!ctx || ambient) return;
+  const masterGain = ctx.createGain();
+  masterGain.gain.value = 0.05;
+  masterGain.connect(ctx.destination);
+
+  const nodes: OscillatorNode[] = [];
+  const voices = [
+    { freq: 55, gain: 0.9, lfoRate: 0.035, lfoDepth: 0.3 },
+    { freq: 82.5, gain: 0.45, lfoRate: 0.05, lfoDepth: 0.18 },
+    { freq: 110, gain: 0.3, lfoRate: 0.07, lfoDepth: 0.12 },
+  ];
+  for (const voice of voices) {
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.value = voice.freq;
+    const voiceGain = ctx.createGain();
+    voiceGain.gain.value = voice.gain;
+    osc.connect(voiceGain).connect(masterGain);
+    osc.start();
+    nodes.push(osc);
+
+    const lfo = ctx.createOscillator();
+    lfo.type = "sine";
+    lfo.frequency.value = voice.lfoRate;
+    const lfoGain = ctx.createGain();
+    lfoGain.gain.value = voice.gain * voice.lfoDepth;
+    lfo.connect(lfoGain).connect(voiceGain.gain);
+    lfo.start();
+    nodes.push(lfo);
+  }
+  ambient = { masterGain, nodes };
+}
+
+function stopAmbient() {
+  if (!ambient) return;
+  for (const node of ambient.nodes) {
+    try {
+      node.stop();
+    } catch {
+      // already stopped; nothing to do
+    }
+  }
+  ambient.masterGain.disconnect();
+  ambient = null;
 }
 
 function beep(freq: number, durationMs: number, type: OscillatorType = "sine", gain = 0.08) {
@@ -81,11 +151,20 @@ function playShieldBreakSound() {
 function playDashSound() {
   beep(700, 60, "square", 0.05);
 }
+function playSlowmoSound() {
+  beep(320, 120, "sine", 0.07);
+  setTimeout(() => beep(220, 220, "sine", 0.06), 100);
+}
 
 function toggleSound() {
   soundOn = !soundOn;
   localStorage.setItem("two-tone-sound", soundOn ? "on" : "off");
-  if (soundOn) ensureAudio();
+  if (soundOn) {
+    ensureAudio();
+    startAmbient();
+  } else {
+    stopAmbient();
+  }
 }
 
 let width = 0;
@@ -153,6 +232,19 @@ let neutralAvailable = false;
 let neutralActive = false;
 let neutralTimeLeft = 0;
 let neutralNextThreshold = NEUTRAL_SCORE_STEP;
+
+// Slow-motion: holding Down builds a charge meter instead of unlocking
+// instantly, so it's a power-up you commit to charging during a lull, not a
+// button you mash the moment things get hairy. Charge drains (faster than it
+// fills) the moment Down is released before it's full, and once spent the
+// burst runs on its own timer regardless of whether Down is still held.
+const SLOWMO_CHARGE_TIME_S = 3.2;
+const SLOWMO_DECAY_RATE = 1.6; // relative to the fill rate
+const SLOWMO_DURATION_S = 3.5;
+const SLOWMO_FACTOR = 0.45;
+let slowmoCharge = 0;
+let slowmoActive = false;
+let slowmoTimeLeft = 0;
 
 function playRiskyMatchSound() {
   beep(1100, 90, "sine", 0.07);
@@ -253,6 +345,9 @@ function resetGame() {
   neutralActive = false;
   neutralTimeLeft = 0;
   neutralNextThreshold = NEUTRAL_SCORE_STEP;
+  slowmoCharge = 0;
+  slowmoActive = false;
+  slowmoTimeLeft = 0;
   announcer.textContent = "";
 }
 
@@ -261,6 +356,11 @@ function spawnObstacle() {
   const active = activeHueCount(elapsedSeconds);
   const hue: Hue = ALL_HUES[Math.floor(Math.random() * active)];
   const shifting = elapsedSeconds >= SHIFT_MIN_ELAPSED_S && Math.random() < SHIFT_CHANCE;
+  // Speed and drift both randomised per-obstacle (and widen with elapsed
+  // time) so a screen full of circles reads as independent threats moving on
+  // their own lines, not one uniform wave falling straight down.
+  const speedSpread = 0.55 + Math.min(elapsedSeconds / 90, 0.65);
+  const driftSpread = 40 + Math.min(elapsedSeconds * 1.5, 140);
   obstacles.push({
     x: clamp(Math.random() * width, radius, width - radius),
     y: -radius,
@@ -268,6 +368,8 @@ function spawnObstacle() {
     hue,
     shifting,
     shiftTimerMs: shifting ? SHIFT_INTERVAL_MS : undefined,
+    speedMult: 1 - speedSpread / 2 + Math.random() * speedSpread,
+    driftVx: (Math.random() - 0.5) * 2 * driftSpread,
   });
 }
 
@@ -392,13 +494,14 @@ window.addEventListener("keydown", (event) => {
     activateNeutral();
     return;
   }
-  if (state === "playing" && ["1", "2", "3", "4"].includes(event.key)) {
+  if (state === "playing" && DIGIT_KEYS.includes(event.key)) {
     // Direct selection, not just cycling: picks the Nth active hue outright,
     // a faster route to a specific colour once there are more than two to
-    // cycle through. A digit beyond the currently active count is a no-op
-    // rather than an error, since which digits do anything changes as
+    // cycle through. "0" picks the 10th hue since there's no digit for it
+    // otherwise. A digit beyond the currently active count is a no-op rather
+    // than an error, since which digits do anything changes as
     // activeHueCount ramps up mid-round.
-    const index = Number(event.key) - 1;
+    const index = event.key === "0" ? 9 : Number(event.key) - 1;
     const active = activeHueCount(elapsedSeconds);
     if (index < active) {
       player.hue = ALL_HUES[index];
@@ -432,12 +535,15 @@ window.addEventListener("keydown", (event) => {
     if (event.repeat) return;
     player.hue = cycleHue(player.hue, activeHueCount(elapsedSeconds));
     playSwapSound();
+  } else if (event.key === "ArrowDown") {
+    pressed.add("down");
   }
 });
 
 window.addEventListener("keyup", (event) => {
   if (event.key === "ArrowLeft" || event.key === "a" || event.key === "A") pressed.delete("left");
   if (event.key === "ArrowRight" || event.key === "d" || event.key === "D") pressed.delete("right");
+  if (event.key === "ArrowDown") pressed.delete("down");
 });
 
 // A key held down while the tab loses focus never gets its keyup — clear
@@ -453,6 +559,16 @@ window.addEventListener("blur", releaseHeldInput);
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) releaseHeldInput();
 });
+
+// Browsers block AudioContext until a real user gesture; movement keys and
+// the initial drag never call ensureAudio() themselves the way a beep-
+// triggering action does, so without this the ambient drone would only ever
+// start if the first thing a player did was swap colour or hit mute.
+function primeAudio() {
+  ensureAudio();
+}
+window.addEventListener("keydown", primeAudio, { once: true });
+canvas.addEventListener("pointerdown", primeAudio, { once: true });
 
 function gameOver() {
   state = "gameover";
@@ -485,6 +601,24 @@ function update(dt: number) {
     if (neutralTimeLeft === 0) neutralActive = false;
   }
 
+  if (!slowmoActive) {
+    if (pressed.has("down")) {
+      slowmoCharge = Math.min(1, slowmoCharge + dt / SLOWMO_CHARGE_TIME_S);
+      if (slowmoCharge >= 1) {
+        slowmoCharge = 0;
+        slowmoActive = true;
+        slowmoTimeLeft = SLOWMO_DURATION_S;
+        playSlowmoSound();
+        spawnBurst(player.x, player.y, "#7dd3fc", 20);
+      }
+    } else {
+      slowmoCharge = Math.max(0, slowmoCharge - dt * SLOWMO_DECAY_RATE / SLOWMO_CHARGE_TIME_S);
+    }
+  } else {
+    slowmoTimeLeft = Math.max(0, slowmoTimeLeft - dt);
+    if (slowmoTimeLeft === 0) slowmoActive = false;
+  }
+
   if (draggingPointerId === null) {
     const dir = (pressed.has("right") ? 1 : 0) - (pressed.has("left") ? 1 : 0);
     const baseSpeed = moveSpeed(elapsedSeconds);
@@ -498,10 +632,18 @@ function update(dt: number) {
     spawnTimer = spawnIntervalMs(elapsedSeconds);
   }
 
-  const speed = fallSpeed(elapsedSeconds);
+  const speed = fallSpeed(elapsedSeconds) * (slowmoActive ? SLOWMO_FACTOR : 1);
   const survivors: Obstacle[] = [];
   for (const obstacle of obstacles) {
-    obstacle.y += speed * dt;
+    obstacle.y += speed * (obstacle.speedMult ?? 1) * dt;
+
+    if (obstacle.driftVx) {
+      obstacle.x += obstacle.driftVx * dt;
+      if (obstacle.x - obstacle.radius <= 0 || obstacle.x + obstacle.radius >= width) {
+        obstacle.driftVx = -obstacle.driftVx;
+        obstacle.x = clamp(obstacle.x, obstacle.radius, width - obstacle.radius);
+      }
+    }
 
     if (obstacle.shifting && obstacle.shiftTimerMs !== undefined) {
       obstacle.shiftTimerMs -= dt * 1000;
@@ -729,6 +871,24 @@ function draw() {
     ctx.moveTo(muteButton.x - 10, muteButton.y - 10);
     ctx.lineTo(muteButton.x + 12, muteButton.y + 10);
     ctx.stroke();
+  }
+
+  // Slow-motion charge bar: fills while Down is held, drains faster than it
+  // fills if released early --- the build-up is visible, not just felt in
+  // the timing, so a player can see how close they are before committing.
+  if (!slowmoActive && slowmoCharge > 0) {
+    ctx.fillStyle = "rgba(125, 211, 252, 0.25)";
+    ctx.fillRect(0, height - 5, width, 5);
+    ctx.fillStyle = "#7dd3fc";
+    ctx.fillRect(0, height - 5, width * slowmoCharge, 5);
+  }
+  if (slowmoActive) {
+    // A soft blue wash over the whole screen reads as "time is slow" at a
+    // glance, fading out as the burst runs down.
+    ctx.fillStyle = `rgba(125, 211, 252, ${0.08 + 0.09 * (slowmoTimeLeft / SLOWMO_DURATION_S)})`;
+    ctx.fillRect(0, 0, width, height);
+    ctx.fillStyle = "rgba(125, 211, 252, 0.6)";
+    ctx.fillRect(0, height - 5, width * (slowmoTimeLeft / SLOWMO_DURATION_S), 5);
   }
 
   ctx.fillStyle = "#f5f5f7";
